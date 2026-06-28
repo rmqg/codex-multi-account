@@ -175,7 +175,7 @@ function tokenCountWithoutCredits() {
       'model = "gpt-fast"',
       'profile = "fast"',
       'model_reasoning_effort = "low"',
-      'service_tier = "priority"',
+      'service_tier = "fast"',
       "",
       "[projects.\"/tmp/project\"]",
       'trust_level = "trusted"',
@@ -190,8 +190,6 @@ function tokenCountWithoutCredits() {
     "fast",
     "-c",
     'model_reasoning_effort="low"',
-    "-c",
-    'service_tier="priority"',
     "exec",
     "ship feature",
   ]);
@@ -223,7 +221,7 @@ function tokenCountWithoutCredits() {
       "exec",
       "ship feature",
     ],
-    "explicit task model/profile/effort/service tier win over account defaults",
+    "explicit task model/profile/effort/service tier win over account defaults; account service_tier defaults are not copied",
   );
   assert.deepEqual(
     pinTaskDefaultsFromAccount(["login"], { home: accountHome }),
@@ -239,7 +237,7 @@ function tokenCountWithoutCredits() {
   writeSession(accountHome, [turnContext("xhigh"), taskStarted(), userMessage("/fast"), userMessage("finish it")]);
 
   const retryArgs = retryArgsAfterRateLimit(
-    ["-c", 'model_reasoning_effort="xhigh"', "-c", 'service_tier="auto"', "exec", "finish it"],
+    ["-c", 'model_reasoning_effort="xhigh"', "exec", "finish it"],
     accountHome,
     {
       minMtimeMs: Date.now() - 1000,
@@ -247,8 +245,7 @@ function tokenCountWithoutCredits() {
   );
 
   assert.ok(retryArgs.includes('model_reasoning_effort="xhigh"'));
-  assert.ok(retryArgs.includes('service_tier="priority"'));
-  assert.equal(retryArgs.includes('service_tier="auto"'), false);
+  assert.ok(retryArgs.includes('service_tier="fast"'));
   assert.match(retryArgs.at(-1), /Continue the interrupted task/);
 
   fs.rmSync(accountHome, { recursive: true, force: true });
@@ -259,7 +256,7 @@ function tokenCountWithoutCredits() {
   writeSession(accountHome, [turnContext("xhigh"), taskStarted(), userMessage("/fast off"), userMessage("finish it")]);
 
   const retryArgs = retryArgsAfterRateLimit(
-    ["-c", 'model_reasoning_effort="xhigh"', "-c", 'service_tier="priority"', "exec", "finish it"],
+    ["-c", 'model_reasoning_effort="xhigh"', "-c", 'service_tier="fast"', "exec", "finish it"],
     accountHome,
     {
       minMtimeMs: Date.now() - 1000,
@@ -268,7 +265,7 @@ function tokenCountWithoutCredits() {
 
   assert.ok(retryArgs.includes('model_reasoning_effort="xhigh"'));
   assert.ok(retryArgs.includes('service_tier="auto"'));
-  assert.equal(retryArgs.includes('service_tier="priority"'), false);
+  assert.equal(retryArgs.includes('service_tier="fast"'), false);
   assert.match(retryArgs.at(-1), /Continue the interrupted task/);
 
   fs.rmSync(accountHome, { recursive: true, force: true });
@@ -279,7 +276,7 @@ function tokenCountWithoutCredits() {
   writeSession(accountHome, [turnContext("xhigh"), taskStarted(), userMessage("/fast"), userMessage("finish it")]);
 
   const retryArgs = retryArgsAfterRateLimit(
-    ["-c", 'model_reasoning_effort="xhigh"', "-c", 'service_tier="priority"', "exec", "finish it"],
+    ["-c", 'model_reasoning_effort="xhigh"', "-c", 'service_tier="fast"', "exec", "finish it"],
     accountHome,
     {
       minMtimeMs: Date.now() - 1000,
@@ -288,7 +285,26 @@ function tokenCountWithoutCredits() {
 
   assert.ok(retryArgs.includes('model_reasoning_effort="xhigh"'));
   assert.ok(retryArgs.includes('service_tier="auto"'));
-  assert.equal(retryArgs.includes('service_tier="priority"'), false);
+  assert.equal(retryArgs.includes('service_tier="fast"'), false);
+  assert.match(retryArgs.at(-1), /Continue the interrupted task/);
+
+  fs.rmSync(accountHome, { recursive: true, force: true });
+}
+
+{
+  const accountHome = tempAccountHome();
+  writeSession(accountHome, [turnContext("xhigh", { serviceTier: "fast" }), taskStarted(), userMessage("finish it")]);
+
+  const retryArgs = retryArgsAfterRateLimit(
+    ["-c", 'model_reasoning_effort="xhigh"', "exec", "finish it"],
+    accountHome,
+    {
+      minMtimeMs: Date.now() - 1000,
+    },
+  );
+
+  assert.ok(retryArgs.includes('model_reasoning_effort="xhigh"'));
+  assert.ok(retryArgs.includes('service_tier="fast"'));
   assert.match(retryArgs.at(-1), /Continue the interrupted task/);
 
   fs.rmSync(accountHome, { recursive: true, force: true });

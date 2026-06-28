@@ -107,8 +107,9 @@ Start Codex with automatic account selection:
 cxa
 ```
 
-After one task starts, model, profile, reasoning effort, and service tier stay with that task instead of changing to the next account's defaults.
-If you use `/fast`, `/fast on`, or `/fast off` during the task, automatic handoff inherits that service-tier state instead of lowering reasoning effort.
+After one task starts, model, profile, and reasoning effort stay with that task instead of changing to the next account's defaults.
+New Codex task runs are standard speed by default; cx passes `service_tier="auto"` unless you explicitly set a service tier.
+If you use `/fast`, `/fast on`, or `/fast off` during the task, automatic handoff inherits that Fast mode state as `service_tier="fast"` or `service_tier="auto"` instead of lowering reasoning effort.
 If the interrupted session records a later reasoning effort, for example from `/slow` or turn context, automatic handoff keeps that reasoning effort too.
 
 Run a one-shot task:
