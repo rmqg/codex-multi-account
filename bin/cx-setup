@@ -36,6 +36,7 @@ const fullSharedItems = [
 const apiKeyModes = new Set(["prefer", "fallback"]);
 const apiKeyCheckModes = new Set(["auto", "models", "responses", "chat"]);
 const defaultApiKeyCheckTimeoutMs = 15000;
+const sharedUserConfigTopLevelKeys = new Set(["notify"]);
 
 function usage() {
   console.log(`Usage:
@@ -136,6 +137,13 @@ Shared items:
   With --full:
     default items plus log, goals_1.sqlite*, logs_2.sqlite*,
     memories_1.sqlite*, state_5.sqlite*
+
+Config sync:
+  config.toml is never symlinked because each account can need its own auth,
+  provider, profile, model, or project-trust settings. If the shared home has
+  top-level user-only settings such as notify, cx-setup copies them into every
+  selected account config.toml and removes them from the shared config.toml so
+  Codex will not warn when the shared home is seen as a project-local .codex layer.
 
 Important:
   Exit running Codex sessions before real --full/--migrate runs.
@@ -1109,6 +1117,152 @@ function firstTableLine(lines) {
   return index >= 0 ? index : lines.length;
 }
 
+function stripTomlComment(line) {
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inDouble && char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && char === "#") {
+      return line.slice(0, index);
+    }
+  }
+
+  return line;
+}
+
+function topLevelKeyMatch(line) {
+  return stripTomlComment(line).trim().match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/u);
+}
+
+function readTopLevelTomlRawValues(file, keys) {
+  const values = new Map();
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return values;
+  }
+
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const tableIndex = firstTableLine(lines);
+  for (let index = 0; index < tableIndex; index += 1) {
+    const match = topLevelKeyMatch(lines[index]);
+    if (!match || !keys.has(match[1])) {
+      continue;
+    }
+    values.set(match[1], match[2].trim());
+  }
+  return values;
+}
+
+function upsertTopLevelTomlRawValues(file, values, options) {
+  if (values.size < 1) {
+    return;
+  }
+
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const lines = existing ? existing.replace(/\r\n/g, "\n").split("\n") : [];
+  if (lines.length > 0 && lines.at(-1) === "") {
+    lines.pop();
+  }
+
+  const pending = new Map(values);
+  const tableIndex = firstTableLine(lines);
+  for (let index = 0; index < tableIndex; index += 1) {
+    const match = topLevelKeyMatch(lines[index]);
+    if (!match || !pending.has(match[1])) {
+      continue;
+    }
+    lines[index] = `${match[1]} = ${pending.get(match[1])}`;
+    pending.delete(match[1]);
+  }
+
+  if (pending.size > 0) {
+    const insert = [...pending.entries()].map(([key, value]) => `${key} = ${value}`);
+    lines.splice(tableIndex, 0, ...insert, ...(tableIndex === 0 && lines.length > 0 ? [""] : []));
+  }
+
+  if (options.dryRun) {
+    console.log(`[dry-run] write ${file}`);
+    return;
+  }
+  ensureParent(file, options);
+  fs.writeFileSync(file, `${lines.join("\n")}\n`, { mode: 0o600 });
+}
+
+function removeTopLevelTomlKeys(file, keys, options) {
+  if (!fs.existsSync(file)) {
+    return;
+  }
+
+  const original = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+  const lines = original.split("\n");
+  const hadTrailingNewline = lines.at(-1) === "";
+  if (hadTrailingNewline) {
+    lines.pop();
+  }
+  const tableIndex = firstTableLine(lines);
+  let changed = false;
+  const nextLines = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = index < tableIndex ? topLevelKeyMatch(lines[index]) : null;
+    if (match && keys.has(match[1])) {
+      changed = true;
+      continue;
+    }
+    nextLines.push(lines[index]);
+  }
+
+  while (nextLines.length > 1 && nextLines[0] === "" && /^\s*\[/.test(nextLines[1])) {
+    nextLines.shift();
+    changed = true;
+  }
+
+  if (!changed) {
+    return;
+  }
+  if (options.dryRun) {
+    console.log(`[dry-run] remove ${[...keys].join(", ")} from ${file}`);
+    return;
+  }
+  fs.writeFileSync(file, `${nextLines.join("\n")}\n`, { mode: 0o600 });
+}
+
+function syncSharedUserConfig(sharedHome, accounts, options) {
+  const sharedConfig = path.join(sharedHome, "config.toml");
+  const values = readTopLevelTomlRawValues(sharedConfig, sharedUserConfigTopLevelKeys);
+  if (values.size < 1 || accounts.length < 1) {
+    return;
+  }
+
+  for (const account of accounts) {
+    upsertTopLevelTomlRawValues(path.join(account.home, "config.toml"), values, options);
+  }
+  removeTopLevelTomlKeys(sharedConfig, sharedUserConfigTopLevelKeys, options);
+  console.log(
+    `synced ${[...values.keys()].join(", ")} from ${sharedConfig} to ${accounts.length} account config.toml file(s)`,
+  );
+}
+
 function upsertTopLevelTomlStrings(file, values, options) {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   const lines = existing ? existing.replace(/\r\n/g, "\n").split("\n") : [];
@@ -1300,6 +1454,7 @@ async function setup(options) {
     }
     console.log(`configured ${accountHome}`);
   }
+  syncSharedUserConfig(sharedHome, remainingHomes, options);
 
   if (options.addApiKey) {
     await writeApiKeyAccount(apiKeyAccount, options);

@@ -243,6 +243,12 @@ models_cache.json
 - 会话记录会共享，所以切号后更容易继续。
 - `auth.json` 不会共享。
 - 每个账号仍然保留自己的登录状态。
+- `config.toml` 不会软链共享。每个账号可以保留自己的认证、provider、
+  profile、model 和项目 trust 设置。
+- setup 时，如果共享的 `~/.codex/config.toml` 里有 `notify` 这类只能放在
+  用户级配置的顶层项，会复制到每个选中的账号 `config.toml`，然后从共享文件
+  移除。这样 `~/.codex/config.toml` 被 Codex 当作项目本地 `.codex` 层读取时，
+  不会再触发启动告警。
 
 如果你还想共享日志、goals、state、memories sqlite 文件：
 

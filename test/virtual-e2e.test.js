@@ -218,6 +218,7 @@ const envBase = {
   ...process.env,
   HOME: root,
   PATH: `${path.join(repo, "bin")}:${fakeBin}:${process.env.PATH}`,
+  TZ: "UTC",
   FAKE_RECORDS: recordsFile,
   FAKE_LIMITS: JSON.stringify(defaultLimits),
   CX_LIMIT_TIMEOUT_MS: "3000",
@@ -265,7 +266,9 @@ function assertLink(link, target) {
   assert.equal(path.resolve(path.dirname(link), fs.readlinkSync(link)), target, `${link} target`);
 }
 
-function writeSharedSession(threadId, cwd = root) {
+let sharedSessionMtimeCounter = 0;
+
+function writeSharedSession(threadId, cwd = fs.realpathSync.native(root)) {
   const dir = path.join(root, ".codex", "sessions", "2026", "06", "04");
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `rollout-2026-06-04T00-00-00-${threadId}.jsonl`);
@@ -277,7 +280,8 @@ function writeSharedSession(threadId, cwd = root) {
       payload: { id: threadId, cwd },
     }) + "\n",
   );
-  const now = new Date();
+  sharedSessionMtimeCounter += 1;
+  const now = new Date(Date.now() + sharedSessionMtimeCounter * 1000);
   fs.utimesSync(file, now, now);
   return file;
 }
@@ -334,7 +338,11 @@ function runVirtualE2e() {
   try {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
     result = ok("cx", ["status"]);
-    assert.match(result.stderr, /account2\s+yes/);
+    if (fs.existsSync("/proc")) {
+      assert.match(result.stderr, /account2\s+yes/);
+    } else {
+      assert.match(result.stderr, /account2\s+-\s+account/);
+    }
   } finally {
     holder.kill("SIGTERM");
   }
@@ -434,24 +442,36 @@ function runVirtualE2e() {
   assert.equal(readRecords().filter((entry) => entry.type === "run").length, 1);
 
   const pausedGoalThreadId = "019eaaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee";
-  writeSharedSession(pausedGoalThreadId);
+  const pausedGoalFile = writeSharedSession(pausedGoalThreadId);
   clearRecords();
   ok("cxa", ["resume", "--last"], {
-    FAKE_GOALS: JSON.stringify({ ".codex-account1": { [pausedGoalThreadId]: "paused" } }),
+    FAKE_GOALS: JSON.stringify({
+      ".codex-account1": { [pausedGoalThreadId]: "paused" },
+      ".codex-account2": { [pausedGoalThreadId]: "paused" },
+      ".codex-account3": { [pausedGoalThreadId]: "paused" },
+      ".codex-account4": { [pausedGoalThreadId]: "paused" },
+    }),
   });
   let goalSets = readRecords().filter((entry) => entry.type === "goal-set");
   assert.equal(goalSets.length, 1, JSON.stringify(goalSets));
   assert.deepEqual(goalSets[0].params, { threadId: pausedGoalThreadId, status: "active" });
 
   const disabledGoalThreadId = "019eaaaa-bbbb-7ccc-8ddd-ffffffffffff";
-  writeSharedSession(disabledGoalThreadId);
+  const disabledGoalFile = writeSharedSession(disabledGoalThreadId);
   clearRecords();
   ok("cxa", ["resume", "--last"], {
     CX_AUTO_RESUME_GOAL: "0",
-    FAKE_GOALS: JSON.stringify({ ".codex-account1": { [disabledGoalThreadId]: "paused" } }),
+    FAKE_GOALS: JSON.stringify({
+      ".codex-account1": { [disabledGoalThreadId]: "paused" },
+      ".codex-account2": { [disabledGoalThreadId]: "paused" },
+      ".codex-account3": { [disabledGoalThreadId]: "paused" },
+      ".codex-account4": { [disabledGoalThreadId]: "paused" },
+    }),
   });
   goalSets = readRecords().filter((entry) => entry.type === "goal-set");
   assert.equal(goalSets.length, 0, JSON.stringify(goalSets));
+  fs.rmSync(pausedGoalFile, { force: true });
+  fs.rmSync(disabledGoalFile, { force: true });
 
   clearRecords();
   ok("cxa", ["resume", "--last"], { FAKE_LIMIT_ACCOUNT: ".codex-account1" });

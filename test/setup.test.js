@@ -147,6 +147,7 @@ assert.throws(
   assert.match(result.stdout, /Install the optional codex PATH wrapper/);
   assert.match(result.stdout, /Create numbered accounts with full shared state/);
   assert.match(result.stdout, /never links or shares auth\.json/);
+  assert.match(result.stdout, /Config sync:/);
 }
 
 {
@@ -166,6 +167,55 @@ assert.throws(
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.lstatSync(installed).isSymbolicLink(), true);
   assert.equal(path.resolve(wrapperBin, fs.readlinkSync(installed)), path.resolve(__dirname, "../bin/codex"));
+  fs.rmSync(tempHome, { recursive: true, force: true });
+}
+
+{
+  const setup = path.resolve(__dirname, "../bin/cx-setup");
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cx-setup-config-sync-"));
+  const sharedHome = path.join(tempHome, ".codex");
+  const accountOne = path.join(tempHome, ".codex-account1");
+  fs.mkdirSync(sharedHome, { recursive: true });
+  fs.mkdirSync(accountOne, { recursive: true });
+  fs.writeFileSync(
+    path.join(sharedHome, "config.toml"),
+    [
+      'notify = ["terminal-notifier", "Codex # one"] # user-level only',
+      'model = "gpt-shared"',
+      "",
+      "[features]",
+      "js_repl = false",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(
+    path.join(accountOne, "config.toml"),
+    [
+      'notify = ["old-notify"]',
+      "",
+      `[projects.${JSON.stringify(path.join(tempHome, "project"))}]`,
+      'trust_level = "trusted"',
+      "",
+    ].join("\n"),
+  );
+
+  const result = spawnSync(process.execPath, [setup, "--accounts", "2", "--migrate"], {
+    env: cleanEnv({ HOME: tempHome }),
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const syncedNotify = 'notify = ["terminal-notifier", "Codex # one"]';
+  const sharedConfig = fs.readFileSync(path.join(sharedHome, "config.toml"), "utf8");
+  const accountOneConfig = fs.readFileSync(path.join(accountOne, "config.toml"), "utf8");
+  const accountTwoConfig = fs.readFileSync(path.join(tempHome, ".codex-account2", "config.toml"), "utf8");
+  assert.doesNotMatch(sharedConfig, /^notify\s*=/m);
+  assert.match(sharedConfig, /^model = "gpt-shared"$/m);
+  assert.match(sharedConfig, /^\[features\]$/m);
+  assert.match(accountOneConfig, new RegExp(`^${syncedNotify.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.match(accountOneConfig, /^\[projects\./m);
+  assert.match(accountTwoConfig, new RegExp(`^${syncedNotify.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.match(result.stdout, /synced notify/);
   fs.rmSync(tempHome, { recursive: true, force: true });
 }
 

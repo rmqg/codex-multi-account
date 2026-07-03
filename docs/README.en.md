@@ -243,6 +243,12 @@ Important points:
 - Session history is shared, so switching accounts can continue more easily.
 - `auth.json` is not shared.
 - Every account keeps its own login.
+- `config.toml` is not symlinked. Each account can keep its own auth, provider,
+  profile, model, and project-trust settings.
+- During setup, top-level shared user-only settings such as `notify` are copied
+  from the shared `~/.codex/config.toml` into every selected account
+  `config.toml`, then removed from the shared file. This avoids Codex startup
+  warnings when `~/.codex/config.toml` is seen as a project-local `.codex` layer.
 
 If you also want logs, goals, state, and memories sqlite files shared:
 
