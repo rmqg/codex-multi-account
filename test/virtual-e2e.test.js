@@ -510,11 +510,11 @@ function runVirtualE2e() {
   assert.equal(runs.length, 2, JSON.stringify(runs));
   assert.equal(runs[0].args[runs[0].args.indexOf("--model") + 1], "gpt-fast");
   assert.ok(runs[0].args.includes('model_reasoning_effort="low"'));
-  assert.ok(runs[0].args.includes('service_tier="auto"'));
+  assert.equal(runs[0].args.some((arg) => arg.startsWith("service_tier=")), false);
   assert.equal(runs[0].args.includes('service_tier="fast"'), false);
   assert.equal(runs[1].args[runs[1].args.indexOf("--model") + 1], "gpt-fast");
   assert.ok(runs[1].args.includes('model_reasoning_effort="low"'));
-  assert.ok(runs[1].args.includes('service_tier="auto"'));
+  assert.equal(runs[1].args.some((arg) => arg.startsWith("service_tier=")), false);
   assert.equal(runs[1].args.includes('service_tier="fast"'), false);
   assert.equal(runs[1].args.includes("gpt-slow"), false);
   assert.equal(runs[1].args.includes('model_reasoning_effort="high"'), false);

@@ -264,7 +264,7 @@ function tokenCountWithoutCredits() {
   );
 
   assert.ok(retryArgs.includes('model_reasoning_effort="xhigh"'));
-  assert.ok(retryArgs.includes('service_tier="auto"'));
+  assert.equal(retryArgs.some((arg) => arg.startsWith("service_tier=")), false);
   assert.equal(retryArgs.includes('service_tier="fast"'), false);
   assert.match(retryArgs.at(-1), /Continue the interrupted task/);
 
@@ -284,7 +284,7 @@ function tokenCountWithoutCredits() {
   );
 
   assert.ok(retryArgs.includes('model_reasoning_effort="xhigh"'));
-  assert.ok(retryArgs.includes('service_tier="auto"'));
+  assert.equal(retryArgs.some((arg) => arg.startsWith("service_tier=")), false);
   assert.equal(retryArgs.includes('service_tier="fast"'), false);
   assert.match(retryArgs.at(-1), /Continue the interrupted task/);
 

@@ -53,8 +53,8 @@ When Codex does not report a capacity for a quota window, that window is counted
 Quota probes use a 30s timeout, 3 attempts, and a 1500ms retry delay by default; tune `CX_LIMIT_TIMEOUT_MS`, `CX_LIMIT_RETRIES`, and `CX_LIMIT_RETRY_DELAY_MS` if your network is unstable.
 
 During one auto-switched task, model/profile/reasoning defaults stay with the task.
-New Codex task runs are standard speed by default; cx passes `service_tier="auto"` unless you explicitly set a service tier.
-If you use `/fast`, `/fast on`, or `/fast off` during the task, retries inherit that Fast mode state as `service_tier="fast"` or `service_tier="auto"` instead of changing reasoning effort.
+New Codex task runs leave `service_tier` unset so Codex can use the selected model's default without unsupported-tier warnings.
+If you use `/fast` or `/fast on` during the task, retries inherit `service_tier="fast"`; `/fast off` removes that override instead of changing reasoning effort.
 If the interrupted session records a later reasoning effort, for example from `/slow` or turn context, retries keep that reasoning effort too.
 
 Run Codex:

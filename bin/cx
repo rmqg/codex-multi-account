@@ -181,10 +181,10 @@ Behavior:
   During one auto-switched task, model/profile/reasoning defaults are pinned
   from explicit task args or the first selected account. If the interrupted
   session records a later turn_context model/effort or /slow, the retry uses
-  that latest task state. New Codex task runs default to standard speed with a
-  service_tier="auto" override; /fast on|off or an active Fast service tier is
-  inherited as service_tier="fast" or service_tier="auto" instead of being
-  rewritten as a reasoning-effort change.
+  that latest task state. New Codex task runs leave service_tier unset so Codex
+  can use the selected model's default. /fast on or an active Fast service tier
+  is inherited as service_tier="fast"; /fast off removes that override instead
+  of being rewritten as a reasoning-effort change.
   By default it writes the current directory and any --cd/-C target to the
   selected account's config.toml as projects."<path>".trust_level="trusted".
   Use --no-trust or CX_NO_TRUST=1 to keep Codex's normal trust prompt.
@@ -1619,9 +1619,6 @@ function serviceTierFromFastMode(fastMode) {
   if (fastMode === true) {
     return "fast";
   }
-  if (fastMode === false) {
-    return "auto";
-  }
   return "";
 }
 
@@ -1693,13 +1690,6 @@ function taskDefaultArgsFromAccount(account, args) {
 function pinTaskDefaultsFromAccount(args, account) {
   const pinned = taskDefaultArgsFromAccount(account, args);
   return pinned.length > 0 ? [...pinned, ...args] : args;
-}
-
-function standardServiceTierArgs(args) {
-  if (!shouldPinTaskDefaults(args) || hasConfigAssignment(args, "service_tier")) {
-    return [];
-  }
-  return ["-c", 'service_tier="auto"'];
 }
 
 function normalizeTaskEffort(value) {
@@ -2551,7 +2541,7 @@ function runCodexMonitored(account, commandArgs, logDir) {
 }
 
 async function runForced(options, codexArgs, account) {
-  const commandArgs = [...baseGlobalArgs(options, codexArgs, standardServiceTierArgs(codexArgs)), ...codexArgs];
+  const commandArgs = [...baseGlobalArgs(options, codexArgs), ...codexArgs];
   if (options.dryRun) {
     console.error(`CODEX_HOME=${account.home} codex ${commandArgs.map(shellQuote).join(" ")}`);
     return 0;
@@ -2611,7 +2601,7 @@ async function runAuto(options, initialArgs) {
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), `cx-auto-${safeAccountName(selected.account.name)}-`));
     fs.chmodSync(logDir, 0o700);
     const logConfigArg = `log_dir=${JSON.stringify(logDir)}`;
-    const commandArgs = [...baseGlobalArgs(options, codexArgs, [...standardServiceTierArgs(codexArgs), "-c", logConfigArg]), ...codexArgs];
+    const commandArgs = [...baseGlobalArgs(options, codexArgs, ["-c", logConfigArg]), ...codexArgs];
 
     describeSelection(selected);
 
