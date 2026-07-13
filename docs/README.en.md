@@ -93,10 +93,11 @@ Check remaining quota:
 cx quota
 ```
 
-`cx quota` prints a total first, then one block per account, with colored ASCII bars and reset times for 5h and weekly remaining quota.
-The total is not a simple average; when Codex reports each window capacity, cx weights the remaining quota by that capacity, which fits mixed account types with different limits.
-If a window has no capacity field, cx counts it as one equal-weight unit and marks the Total title with fallback.
-If Codex does not report a reset time, that window shows `reset unknown`.
+`cx quota` prints a weekly total first, then one block per account, with a colored ASCII bar and reset time for the remaining weekly quota.
+cx identifies the weekly window from Codex's reported 10080-minute duration, so it does not assume the nullable `primary` or `secondary` protocol slots have fixed meanings.
+The total is not a simple average; when Codex reports a weekly-window capacity, cx weights the remaining quota by that capacity, which fits mixed account types with different limits.
+If a weekly window has no capacity field, cx counts that account as one equal-weight unit and marks the Total title with fallback.
+If Codex does not report a reset time, the weekly window shows `reset unknown`.
 Quota probes wait up to 30s per account, try 3 times, and wait 1500ms between failed attempts by default; tune the `CX_LIMIT_*` variables below for unstable networks.
 
 ## Daily Use

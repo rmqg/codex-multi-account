@@ -10,7 +10,7 @@ const home = os.homedir();
 const packageVersion = readPackageVersion();
 
 const weeklySimilarDelta = 5;
-const primarySimilarDelta = 20;
+const weeklyWindowDurationMins = 7 * 24 * 60;
 const quotaBarWidth = 20;
 const ansiColors = {
   reset: "\x1b[0m",
@@ -711,8 +711,7 @@ async function readRateLimits(account, options = {}) {
       authMode: "apikey",
       syntheticLimits: true,
       limits: {
-        primary: { usedPercent: 0 },
-        secondary: { usedPercent: 0 },
+        weekly: { usedPercent: 0, windowDurationMins: weeklyWindowDurationMins },
         rateLimitReachedType: "",
       },
     });
@@ -858,11 +857,6 @@ function extractCodexLimit(result) {
   );
 }
 
-function usedPercent(limit, key) {
-  const value = rawUsedPercent(limit, key);
-  return Number.isFinite(value) ? value : 100;
-}
-
 function finiteNumber(value) {
   if (Number.isFinite(value)) {
     return value;
@@ -884,12 +878,45 @@ function firstFiniteNumber(...values) {
   return null;
 }
 
-function rawUsedPercent(limit, key) {
-  return firstFiniteNumber(limit?.[key]?.usedPercent, limit?.[key]?.used_percent);
+function rateLimitWindowDurationMins(bucket) {
+  return firstFiniteNumber(
+    bucket?.windowDurationMins,
+    bucket?.window_duration_mins,
+    bucket?.windowMinutes,
+    bucket?.window_minutes,
+  );
 }
 
-function rawQuotaCapacity(limit, key) {
-  const bucket = limit?.[key];
+function weeklyQuotaBucket(limit) {
+  for (const bucket of [limit?.weekly, limit?.week]) {
+    if (bucket && typeof bucket === "object") {
+      return bucket;
+    }
+  }
+
+  // OpenAI's primary/secondary slots are nullable and no longer identify a fixed quota type.
+  for (const bucket of [limit?.primary, limit?.secondary]) {
+    if (
+      bucket &&
+      typeof bucket === "object" &&
+      rateLimitWindowDurationMins(bucket) === weeklyWindowDurationMins
+    ) {
+      return bucket;
+    }
+  }
+
+  return null;
+}
+
+function rawUsedPercent(bucket) {
+  return firstFiniteNumber(bucket?.usedPercent, bucket?.used_percent);
+}
+
+function usedPercent(limit) {
+  return rawUsedPercent(weeklyQuotaBucket(limit));
+}
+
+function rawQuotaCapacity(bucket) {
   if (!bucket || typeof bucket !== "object") {
     return null;
   }
@@ -933,8 +960,7 @@ function epochMillis(value) {
   return null;
 }
 
-function rawQuotaResetMs(limit, key) {
-  const bucket = limit?.[key];
+function rawQuotaResetMs(bucket) {
   if (!bucket || typeof bucket !== "object") {
     return null;
   }
@@ -993,17 +1019,35 @@ function reached(limit) {
   return limit.rateLimitReachedType || limit.rate_limit_reached_type || "";
 }
 
-function normalizeReachedReason(reason) {
+function normalizeReachedReason(reason, limit) {
   const normalized = String(reason || "").toLowerCase();
+  const weekly = weeklyQuotaBucket(limit);
   if (
+    (normalized === "primary" || normalized === "primary_limit_reached") &&
+    weekly === limit?.primary
+  ) {
+    return "weekly>=100%";
+  }
+  if (
+    (normalized === "secondary" || normalized === "secondary_limit_reached") &&
+    weekly === limit?.secondary
+  ) {
+    return "weekly>=100%";
+  }
+  if (normalized === "workspace_owner_credits_depleted" || normalized === "workspace_member_credits_depleted") {
+    return "credits depleted";
+  }
+  if (normalized === "workspace_owner_usage_limit_reached" || normalized === "workspace_member_usage_limit_reached") {
+    return "usage limit reached";
+  }
+  if (
+    normalized === "rate_limit_reached" ||
     normalized === "primary" ||
     normalized === "primary_limit_reached" ||
-    normalized === "workspace_owner_credits_depleted"
+    normalized === "secondary" ||
+    normalized === "secondary_limit_reached"
   ) {
-    return "5h>=100%";
-  }
-  if (normalized === "secondary" || normalized === "secondary_limit_reached") {
-    return "weekly>=100%";
+    return "rate limit reached";
   }
   return reason;
 }
@@ -1016,19 +1060,22 @@ function limitExhaustedReason(result) {
     return "missing limits";
   }
 
+  const weekly = weeklyQuotaBucket(result.limits);
+  if (!weekly) {
+    return "missing weekly limit";
+  }
+
+  const weeklyUsed = rawUsedPercent(weekly);
+  if (!Number.isFinite(weeklyUsed)) {
+    return "invalid weekly limit";
+  }
+  if (weeklyUsed >= 100) {
+    return "weekly>=100%";
+  }
+
   const reachedType = reached(result.limits);
   if (reachedType) {
-    return normalizeReachedReason(reachedType);
-  }
-
-  const primary = rawUsedPercent(result.limits, "primary");
-  if (Number.isFinite(primary) && primary >= 100) {
-    return "5h>=100%";
-  }
-
-  const secondary = rawUsedPercent(result.limits, "secondary");
-  if (Number.isFinite(secondary) && secondary >= 100) {
-    return "weekly>=100%";
+    return normalizeReachedReason(reachedType, result.limits);
   }
 
   return "";
@@ -1097,53 +1144,34 @@ function compareAccountResults(a, b, options = {}) {
     return isApiKeyResult(a) ? 1 : -1;
   }
 
-  const aSecondary = usedPercent(a.limits, "secondary");
-  const bSecondary = usedPercent(b.limits, "secondary");
-  const secondaryDelta = aSecondary - bSecondary;
-  if (Math.abs(secondaryDelta) > weeklySimilarDelta) {
-    return secondaryDelta;
-  }
+  if (aUsable && bUsable) {
+    const aWeekly = usedPercent(a.limits);
+    const bWeekly = usedPercent(b.limits);
+    const weeklyDelta = aWeekly - bWeekly;
+    if (Math.abs(weeklyDelta) > weeklySimilarDelta) {
+      return weeklyDelta;
+    }
 
-  const aPrimary = usedPercent(a.limits, "primary");
-  const bPrimary = usedPercent(b.limits, "primary");
-  const primaryDelta = aPrimary - bPrimary;
-  if (Math.abs(primaryDelta) > primarySimilarDelta) {
-    return primaryDelta;
-  }
+    if (a.active !== b.active) {
+      return a.active ? 1 : -1;
+    }
 
-  if (a.active !== b.active) {
+    if (weeklyDelta !== 0) {
+      return weeklyDelta;
+    }
+  } else if (a.active !== b.active) {
     return a.active ? 1 : -1;
-  }
-
-  if (primaryDelta !== 0) {
-    return primaryDelta;
-  }
-
-  if (secondaryDelta !== 0) {
-    return secondaryDelta;
   }
 
   return a.account.name.localeCompare(b.account.name);
 }
 
-function formatPercent(value) {
-  return `${Number.isFinite(value) ? value : 100}%`;
-}
-
-function remainingPercent(result, key) {
+function remainingPercent(result) {
   if (!result?.ok || !result.limits) {
     return null;
   }
 
-  const reason = normalizeReachedReason(reached(result.limits));
-  if (key === "primary" && reason === "5h>=100%") {
-    return 0;
-  }
-  if (key === "secondary" && reason === "weekly>=100%") {
-    return 0;
-  }
-
-  const used = rawUsedPercent(result.limits, key);
+  const used = usedPercent(result.limits);
   if (!Number.isFinite(used)) {
     return null;
   }
@@ -1244,7 +1272,7 @@ function formatProgressPercent(value, width = quotaBarWidth, options = {}) {
   );
 }
 
-function quotaWindowSummary(results, key) {
+function weeklyQuotaSummary(results) {
   let totalCapacity = 0;
   let remainingCapacity = 0;
   let accountCount = 0;
@@ -1253,12 +1281,13 @@ function quotaWindowSummary(results, key) {
   let resetMs = null;
 
   for (const result of results) {
-    const remaining = remainingPercent(result, key);
+    const weekly = weeklyQuotaBucket(result.limits);
+    const remaining = remainingPercent(result);
     if (!Number.isFinite(remaining)) {
       continue;
     }
 
-    const capacity = rawQuotaCapacity(result.limits, key);
+    const capacity = rawQuotaCapacity(weekly);
     const weight = Number.isFinite(capacity) ? capacity : 1;
     if (Number.isFinite(capacity)) {
       weightedCount += 1;
@@ -1270,7 +1299,7 @@ function quotaWindowSummary(results, key) {
     totalCapacity += weight;
     remainingCapacity += (remaining / 100) * weight;
 
-    const candidateResetMs = rawQuotaResetMs(result.limits, key);
+    const candidateResetMs = rawQuotaResetMs(weekly);
     if (Number.isFinite(candidateResetMs) && (!Number.isFinite(resetMs) || candidateResetMs < resetMs)) {
       resetMs = candidateResetMs;
     }
@@ -1286,24 +1315,18 @@ function quotaWindowSummary(results, key) {
 }
 
 function quotaTotalSummary(results) {
-  return {
-    primary: quotaWindowSummary(results, "primary"),
-    secondary: quotaWindowSummary(results, "secondary"),
-  };
+  return weeklyQuotaSummary(results);
 }
 
 function quotaTotalLabel(summary) {
-  const windows = summary.primary.accountCount + summary.secondary.accountCount;
-  if (windows < 1) {
+  if (summary.accountCount < 1) {
     return "Total";
   }
 
-  const weighted = summary.primary.weightedCount + summary.secondary.weightedCount;
-  const fallback = summary.primary.fallbackCount + summary.secondary.fallbackCount;
-  if (weighted > 0 && fallback > 0) {
+  if (summary.weightedCount > 0 && summary.fallbackCount > 0) {
     return "Total [weighted; missing capacities use equal weight]";
   }
-  if (weighted > 0) {
+  if (summary.weightedCount > 0) {
     return "Total [weighted by quota capacity]";
   }
   return "Total [equal-weight fallback]";
@@ -1312,19 +1335,18 @@ function quotaTotalLabel(summary) {
 function printStatus(results) {
   const { apiKeyMode } = getRuntimeConfig();
   console.error(
-    `Selection rule: weekly delta > ${weeklySimilarDelta}% wins; within ${weeklySimilarDelta}% use 5h; ` +
-      `5h delta <= ${primarySimilarDelta}% prefers inactive accounts; API-key mode is ${apiKeyMode}; exhausted accounts are skipped.`,
+    `Selection rule: weekly delta > ${weeklySimilarDelta}% wins; otherwise prefer inactive accounts, then lower weekly usage; ` +
+      `API-key mode is ${apiKeyMode}; exhausted accounts are skipped.`,
   );
-  console.error("Account   active   auth      5h used   weekly used   reached   home");
+  console.error("Account   active   auth      weekly used   reached   home");
   for (const result of results.slice().sort((a, b) => compareAccountResults(a, b, { apiKeyMode }))) {
     const limit = result.limits;
     const active = result.active ? "yes" : "-";
     const auth = result.authMode === "apikey" ? "api-key" : result.authMode === "account" ? "account" : "-";
-    const primary = result.ok ? formatPercent(usedPercent(limit, "primary")) : "ERR";
-    const secondary = result.ok ? formatPercent(usedPercent(limit, "secondary")) : "ERR";
+    const weekly = result.ok ? formatOptionalPercent(usedPercent(limit)) : "ERR";
     const hit = limitExhaustedReason(result) || "-";
     console.error(
-      `${result.account.name.padEnd(9)} ${active.padEnd(8)} ${auth.padEnd(9)} ${primary.padEnd(9)} ${secondary.padEnd(13)} ${String(hit).padEnd(9)} ${result.account.home}`,
+      `${result.account.name.padEnd(9)} ${active.padEnd(8)} ${auth.padEnd(9)} ${weekly.padEnd(13)} ${String(hit).padEnd(9)} ${result.account.home}`,
     );
   }
 }
@@ -1333,16 +1355,14 @@ function printQuota(results) {
   console.error("Quota remaining:");
   const total = quotaTotalSummary(results);
   console.error(quotaTotalLabel(total));
-  console.error(`  5h     ${formatProgressPercent(total.primary.percent)}  reset ${formatResetTime(total.primary.resetMs)}`);
-  console.error(`  weekly ${formatProgressPercent(total.secondary.percent)}  reset ${formatResetTime(total.secondary.resetMs)}`);
+  console.error(`  weekly ${formatProgressPercent(total.percent)}  reset ${formatResetTime(total.resetMs)}`);
   for (const result of results) {
     const auth = result.authMode === "apikey" ? "api-key" : result.authMode === "account" ? "account" : "-";
-    const primary = formatProgressPercent(remainingPercent(result, "primary"));
-    const secondary = formatProgressPercent(remainingPercent(result, "secondary"));
+    const weekly = weeklyQuotaBucket(result.limits);
+    const remaining = formatProgressPercent(remainingPercent(result));
     const hit = limitExhaustedReason(result) || "-";
     console.error(`${result.account.name} [${auth}]${hit === "-" ? "" : ` (${hit})`}`);
-    console.error(`  5h     ${primary}  reset ${formatResetTime(rawQuotaResetMs(result.limits, "primary"))}`);
-    console.error(`  weekly ${secondary}  reset ${formatResetTime(rawQuotaResetMs(result.limits, "secondary"))}`);
+    console.error(`  weekly ${remaining}  reset ${formatResetTime(rawQuotaResetMs(weekly))}`);
     console.error(`  home   ${result.account.home}`);
   }
 }
@@ -2382,8 +2402,7 @@ function describeSelection(result, prefix = "cx-auto") {
   const limit = result.limits;
   const auth = result.authMode === "apikey" ? "api-key" : "account";
   console.error(
-    `[${prefix}] selected ${accountDisplayName(result.account)} [${auth}]: 5h used ${formatPercent(usedPercent(limit, "primary"))}, ` +
-      `weekly used ${formatPercent(usedPercent(limit, "secondary"))}`,
+    `[${prefix}] selected ${accountDisplayName(result.account)} [${auth}]: weekly used ${formatOptionalPercent(usedPercent(limit))}`,
   );
 }
 

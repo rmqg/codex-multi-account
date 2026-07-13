@@ -48,8 +48,9 @@ top-level user-only settings such as `notify`, setup syncs them into every
 account config and removes them from the shared config so Codex will not treat
 them as unsupported project-local settings.
 
-`cx quota` shows a weighted total first, then 5h and weekly bars plus reset times for each account.
-When Codex does not report a capacity for a quota window, that window is counted as one equal-weight unit and the total label says so.
+`cx quota` shows a weighted weekly total first, then one weekly bar and reset time for each account.
+It identifies the weekly quota by Codex's reported 10080-minute window instead of assuming `primary` or `secondary` means a fixed quota type.
+When Codex does not report a capacity for the weekly window, that account is counted as one equal-weight unit and the total label says so.
 Quota probes use a 30s timeout, 3 attempts, and a 1500ms retry delay by default; tune `CX_LIMIT_TIMEOUT_MS`, `CX_LIMIT_RETRIES`, and `CX_LIMIT_RETRY_DELAY_MS` if your network is unstable.
 
 During one auto-switched task, model/profile/reasoning defaults stay with the task.

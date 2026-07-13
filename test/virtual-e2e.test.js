@@ -23,7 +23,7 @@ const account = path.basename(home);
 const records = process.env.FAKE_RECORDS;
 function append(data) { if (records) fs.appendFileSync(records, JSON.stringify(data) + '\\n'); }
 function send(data) { process.stdout.write(JSON.stringify(data) + '\\n'); }
-function limits() { return JSON.parse(process.env.FAKE_LIMITS || '{}')[account] || { p: 99, s: 99, r: '' }; }
+function limits() { return JSON.parse(process.env.FAKE_LIMITS || '{}')[account] || { w: 99, r: '' }; }
 function goals() { return JSON.parse(process.env.FAKE_GOALS || '{}')[account] || {}; }
 function shouldFailLimitReadOnce() {
   if (process.env.FAKE_LIMIT_FAIL_ONCE !== '1') return false;
@@ -132,8 +132,8 @@ if (args[0] === 'app-server') {
         }
         const x = limits();
         send({ id: msg.id, result: { rateLimitsByLimitId: { codex: {
-          primary: { usedPercent: x.p, limit: x.pc, resets_at: x.pr },
-          secondary: { usedPercent: x.s, limit: x.sc, resets_at: x.sr },
+          primary: { usedPercent: x.w, windowDurationMins: 10080, limit: x.wc, resetsAt: x.wr },
+          secondary: null,
           rateLimitReachedType: x.r || ''
         } } } });
       }
@@ -208,10 +208,10 @@ if (args[0] === 'app-server') {
 fs.writeFileSync(path.join(fakeBin, "codex"), fakeCodex, { mode: 0o755 });
 
 const defaultLimits = {
-  ".codex-account1": { p: 4, s: 1, pc: 100, sc: 100, pr: 4102444800, sr: 4103049600, r: "" },
-  ".codex-account2": { p: 11, s: 2, pc: 200, sc: 200, pr: 4102448400, sr: 4103053200, r: "" },
-  ".codex-account3": { p: 8, s: 1, pc: 100, sc: 100, pr: 4102452000, sr: 4103056800, r: "" },
-  ".codex-account4": { p: 100, s: 49, pc: 50, sc: 50, pr: 4102455600, sr: 4103060400, r: "workspace_owner_credits_depleted" },
+  ".codex-account1": { w: 1, wc: 100, wr: 4103049600, r: "" },
+  ".codex-account2": { w: 2, wc: 200, wr: 4103053200, r: "" },
+  ".codex-account3": { w: 1, wc: 100, wr: 4103056800, r: "" },
+  ".codex-account4": { w: 49, wc: 50, wr: 4103060400, r: "workspace_owner_credits_depleted" },
 };
 
 const envBase = {
@@ -323,13 +323,14 @@ function runVirtualE2e() {
   ok("cx-setup", ["--accounts", "4", "--full", "--migrate"]);
 
   let result = ok("cx", ["status"]);
-  assert.match(result.stderr, /account4\s+-\s+account\s+100%\s+49%\s+5h>=100%/);
+  assert.match(result.stderr, /account4\s+-\s+account\s+49%\s+credits depleted/);
 
   result = ok("cx", ["quota"]);
   assert.match(result.stderr, /Quota remaining:/);
-  assert.match(result.stderr, /Total \[weighted by quota capacity\]\n  5h\s+\[################----\] 81\.33%  reset .*2100-\d\d-\d\d \d\d:\d\d\)\n  weekly \[###################-\] 93\.22%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
-  assert.match(result.stderr, /account1 \[account\]\n  5h\s+\[###################-\] 96%  reset .*2100-\d\d-\d\d \d\d:\d\d\)\n  weekly \[####################\] 99%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
-  assert.match(result.stderr, /account4 \[account\] \(5h>=100%\)\n  5h\s+\[--------------------\] 0%  reset .*2100-\d\d-\d\d \d\d:\d\d\)\n  weekly \[##########----------\] 51%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
+  assert.match(result.stderr, /Total \[weighted by quota capacity\]\n  weekly \[###################-\] 93\.22%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
+  assert.match(result.stderr, /account1 \[account\]\n  weekly \[####################\] 99%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
+  assert.match(result.stderr, /account4 \[account\] \(credits depleted\)\n  weekly \[##########----------\] 51%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
+  assert.doesNotMatch(result.stderr, /5h/);
 
   const holder = spawn(path.join(fakeBin, "codex"), ["hold"], {
     env: { ...envBase, CODEX_HOME: path.join(root, ".codex-account2") },
@@ -389,10 +390,10 @@ function runVirtualE2e() {
   assert.match(result.stderr, /--dry-run exec hello/);
 
   const exhaustedLimits = JSON.stringify({
-    ".codex-account1": { p: 100, s: 1, r: "" },
-    ".codex-account2": { p: 10, s: 100, r: "" },
-    ".codex-account3": { p: 99, s: 1, r: "primary" },
-    ".codex-account4": { p: 100, s: 49, r: "workspace_owner_credits_depleted" },
+    ".codex-account1": { w: 100, r: "" },
+    ".codex-account2": { w: 100, r: "" },
+    ".codex-account3": { w: 1, r: "rate_limit_reached" },
+    ".codex-account4": { w: 49, r: "workspace_owner_credits_depleted" },
   });
   result = run("cx", ["--dry-run", "exec", "blocked"], { FAKE_LIMITS: exhaustedLimits });
   assert.equal(result.status, 1);
@@ -592,8 +593,8 @@ function runVirtualE2e() {
   ok("cxa", ["resume", "--last"], {
     CX_ACCOUNT_HOMES: `one=${unsharedOne},two=${unsharedTwo}`,
     FAKE_LIMITS: JSON.stringify({
-      "unshared-account1": { p: 1, s: 1, r: "" },
-      "unshared-account2": { p: 2, s: 2, r: "" },
+      "unshared-account1": { w: 1, r: "" },
+      "unshared-account2": { w: 2, r: "" },
     }),
     FAKE_LIMIT_ACCOUNT: "unshared-account1",
   });

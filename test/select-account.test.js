@@ -22,15 +22,17 @@ const {
   trustedProjectPathsFromCodexArgs,
 } = require("../bin/cx");
 
-function account(name, primary, secondary, options = {}) {
+function account(name, weekly, options = {}) {
+  const weeklyBucket = { usedPercent: weekly, windowDurationMins: 10080 };
+  const weeklyKey = options.weeklyKey || "primary";
   return {
     account: { name, home: `/tmp/${name}` },
     active: Boolean(options.active),
     ok: options.ok ?? true,
     error: options.error,
     limits: {
-      primary: { usedPercent: primary },
-      secondary: { usedPercent: secondary },
+      primary: options.primary === undefined ? (weeklyKey === "primary" ? weeklyBucket : null) : options.primary,
+      secondary: options.secondary === undefined ? (weeklyKey === "secondary" ? weeklyBucket : null) : options.secondary,
       rateLimitReachedType: options.reached || "",
     },
     authMode: options.authMode || "account",
@@ -353,9 +355,9 @@ function tokenCountWithoutCredits() {
 
 {
   const selected = selectResult([
-    account("account1", 1, 80),
-    account("account2", 99, 10, { active: true }),
-    account("account3", 20, 30),
+    account("account1", 80),
+    account("account2", 10, { active: true }),
+    account("account3", 30),
   ]);
 
   assert.equal(selected.account.name, "account2", "weekly usage wins when the gap is above 5%");
@@ -363,46 +365,46 @@ function tokenCountWithoutCredits() {
 
 {
   const selected = selectResult([
-    account("account1", 80, 10),
-    account("account2", 20, 14),
+    account("account1", 10, { active: true }),
+    account("account2", 14),
   ]);
 
-  assert.equal(selected.account.name, "account2", "5h usage wins when weekly usage is within 5%");
+  assert.equal(selected.account.name, "account2", "inactive accounts win when weekly usage is within 5%");
 }
 
 {
   const selected = selectResult([
-    account("account1", 10, 10, { active: true }),
-    account("account2", 29, 14),
+    account("account1", 10),
+    account("account2", 14),
   ]);
 
-  assert.equal(selected.account.name, "account2", "inactive account wins when weekly and 5h gaps are both within thresholds");
+  assert.equal(selected.account.name, "account1", "lower weekly usage breaks an equally active near-tie");
 }
 
 {
   const selected = selectResult([
-    account("account1", 10, 10, { active: true }),
-    account("account2", 31, 14),
+    account("account1", 10, { active: true }),
+    account("account2", 20),
   ]);
 
-  assert.equal(selected.account.name, "account1", "5h usage wins when the 5h gap is above 20%");
+  assert.equal(selected.account.name, "account1", "lower weekly usage wins even when that account is active");
 }
 
 {
   const selected = selectResult([
-    account("account1", 30, 30, { active: true }),
-    account("account2", 30, 30),
-    account("account3", 30, 30),
+    account("account1", 30, { active: true }),
+    account("account2", 30),
+    account("account3", 30),
   ]);
 
   assert.equal(selected.account.name, "account2", "account name breaks ties after active state");
 }
 
 {
-  const exhausted = account("account1", 0, 0, { reached: "secondary" });
+  const exhausted = account("account1", 100);
   const selected = selectResult([
     exhausted,
-    account("account2", 70, 20),
+    account("account2", 20),
   ]);
 
   assert.equal(limitExhaustedReason(exhausted), "weekly>=100%");
@@ -410,29 +412,29 @@ function tokenCountWithoutCredits() {
 }
 
 {
-  assert.equal(limitExhaustedReason(account("account1", 0, 0, { reached: "primary" })), "5h>=100%");
+  assert.equal(limitExhaustedReason(account("account1", 0, { reached: "primary" })), "weekly>=100%");
   assert.equal(
-    limitExhaustedReason(account("account2", 100, 49, { reached: "workspace_owner_credits_depleted" })),
-    "5h>=100%",
+    limitExhaustedReason(account("account2", 49, { reached: "workspace_owner_credits_depleted" })),
+    "credits depleted",
   );
-  assert.equal(limitExhaustedReason(account("account3", 99, 100, { reached: "secondary_limit_reached" })), "weekly>=100%");
+  assert.equal(limitExhaustedReason(account("account3", 49, { reached: "rate_limit_reached" })), "rate limit reached");
 }
 
 {
   const selected = selectResult([
-    account("account1", 100, 10),
-    account("account2", 20, 100),
-    account("account3", 0, 0, { reached: "primary" }),
+    account("account1", 100),
+    account("account2", 100),
+    account("account3", 0, { reached: "rate_limit_reached" }),
   ]);
 
   assert.equal(selected, null, "all exhausted accounts return no selection");
 }
 
 {
-  const exhausted = account("account3", 0, 0, { reached: "primary" });
+  const exhausted = account("account3", 0, { reached: "rate_limit_reached" });
   const selected = selectResult([
-    account("account1", 20, 50, { active: true }),
-    account("account2", 30, 60, { active: true }),
+    account("account1", 20, { active: true }),
+    account("account2", 30, { active: true }),
     exhausted,
   ]);
 
@@ -441,10 +443,41 @@ function tokenCountWithoutCredits() {
 }
 
 {
+  const selected = selectResult([
+    account("legacy", 30, {
+      weeklyKey: "secondary",
+      primary: { usedPercent: 1, windowDurationMins: 300 },
+    }),
+    account("current", 20),
+  ]);
+
+  assert.equal(selected.account.name, "current", "window duration identifies weekly usage instead of the primary/secondary slot");
+}
+
+{
+  const missingWeekly = account("missing", 0, {
+    weeklyKey: "none",
+    primary: { usedPercent: 0, windowDurationMins: 300 },
+  });
+  const selected = selectResult([missingWeekly, account("weekly", 30)]);
+
+  assert.equal(isUsable(missingWeekly), false, "accounts without a weekly window are unavailable");
+  assert.equal(limitExhaustedReason(missingWeekly), "missing weekly limit");
+  assert.equal(selected.account.name, "weekly");
+}
+
+{
+  const invalidWeekly = account("invalid", undefined);
+
+  assert.equal(isUsable(invalidWeekly), false, "accounts without a weekly percentage are unavailable");
+  assert.equal(limitExhaustedReason(invalidWeekly), "invalid weekly limit");
+}
+
+{
   const selected = selectResult(
     [
-      account("account1", 90, 90),
-      account("free", 0, 0, { authMode: "apikey" }),
+      account("account1", 90),
+      account("free", 0, { authMode: "apikey" }),
     ],
     { apiKeyMode: "fallback" },
   );
@@ -455,8 +488,8 @@ function tokenCountWithoutCredits() {
 {
   const selected = selectResult(
     [
-      account("account1", 90, 90),
-      account("free", 0, 0, { authMode: "apikey" }),
+      account("account1", 90),
+      account("free", 0, { authMode: "apikey" }),
     ],
     { apiKeyMode: "prefer" },
   );
@@ -467,8 +500,8 @@ function tokenCountWithoutCredits() {
 {
   const selected = selectResult(
     [
-      account("account1", 100, 90),
-      account("free", 0, 0, { authMode: "apikey" }),
+      account("account1", 100),
+      account("free", 0, { authMode: "apikey" }),
     ],
     { apiKeyMode: "fallback" },
   );

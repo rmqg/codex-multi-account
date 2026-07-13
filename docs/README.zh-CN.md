@@ -93,10 +93,11 @@ cx status
 cx quota
 ```
 
-`cx quota` 会先显示总剩余，再按账号分块显示 5h 和 weekly 剩余额度、恢复时间，并用彩色 ASCII 进度条显示大概情况。
-总剩余不是简单平均；如果 Codex 返回了账号窗口上限，它会按上限加权，适合不同账号类型额度上限不一样的情况。
-如果某个窗口没有上限字段，它会按 1 个单位兜底，并在 Total 标题里标出 fallback。
-如果 Codex 没有返回恢复时间，对应窗口会显示 `reset unknown`。
+`cx quota` 会先显示加权后的 weekly 总剩余，再按账号分块显示 weekly 剩余、恢复时间，并用彩色 ASCII 进度条显示大概情况。
+它会根据 Codex 返回的 10080 分钟窗口识别 weekly，不再假定可为空的 `primary` 或 `secondary` 槽位各自代表固定额度类型。
+总剩余不是简单平均；如果 Codex 返回了 weekly 窗口上限，它会按上限加权，适合不同账号类型额度上限不一样的情况。
+如果 weekly 窗口没有上限字段，它会按 1 个单位兜底，并在 Total 标题里标出 fallback。
+如果 Codex 没有返回恢复时间，weekly 窗口会显示 `reset unknown`。
 额度探测默认每个账号最多等 30 秒，失败后重试 3 次，每次间隔 1500ms；网络不稳时可以调大下面的 `CX_LIMIT_*` 环境变量。
 
 ## 日常使用
