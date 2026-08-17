@@ -369,6 +369,8 @@ CX_INTERACTIVE_AUTO_EXEC=1
 
 `CX_LIMIT_TIMEOUT_MS` controls the per-probe timeout, `CX_LIMIT_RETRIES` controls attempts per account, and `CX_LIMIT_RETRY_DELAY_MS` controls the wait before retrying a failed probe.
 
+Every ChatGPT-account probe reads the current server-side weekly limit; `cx` does not select accounts from a local quota cache. Network timeouts and temporary service failures still retry as configured. If the local access token is already expired, or the server explicitly returns a non-retryable authentication error such as 401/403, probing that account stops immediately so identical failures do not delay `cx` startup.
+
 ## How Auto-Switch Continues Work
 
 When the current account hits a usage limit, `cx` tries to:
@@ -401,6 +403,14 @@ cx-setup --accounts 3 --migrate
 `missing ~/.codex-accountN/auth.json`
 
 That account is not logged in:
+
+```sh
+CODEX_HOME="$HOME/.codex-accountN" codex login
+```
+
+`access token expired`
+
+That account's login token has expired. Log in again before `cx` can read its current weekly limit:
 
 ```sh
 CODEX_HOME="$HOME/.codex-accountN" codex login

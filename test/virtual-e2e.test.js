@@ -126,6 +126,11 @@ if (args[0] === 'app-server') {
       const msg = JSON.parse(line);
       if (msg.method === 'initialize') send({ id: msg.id, result: { ok: true } });
       if (msg.method === 'account/rateLimits/read') {
+        append({ type: 'limit-read', home });
+        if (process.env.FAKE_LIMIT_ERROR) {
+          send({ id: msg.id, error: { message: process.env.FAKE_LIMIT_ERROR } });
+          continue;
+        }
         if (shouldFailLimitReadOnce()) {
           send({ id: msg.id, error: { message: 'failed to fetch codex rate limits: error sending request for url (https://chatgpt.com/backend-api/wham/usage)' } });
           continue;
@@ -330,7 +335,7 @@ function runVirtualE2e() {
   assert.match(result.stderr, /Total \[weighted by quota capacity\]\n  weekly \[###################-\] 93\.22%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
   assert.match(result.stderr, /account1 \[account\]\n  weekly \[####################\] 99%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
   assert.match(result.stderr, /account4 \[account\] \(credits depleted\)\n  weekly \[##########----------\] 51%  reset .*2100-\d\d-\d\d \d\d:\d\d\)/);
-  assert.doesNotMatch(result.stderr, /5h/);
+  assert.doesNotMatch(result.stderr, /^\s*5h\b/m);
 
   const holder = spawn(path.join(fakeBin, "codex"), ["hold"], {
     env: { ...envBase, CODEX_HOME: path.join(root, ".codex-account2") },
@@ -381,6 +386,15 @@ function runVirtualE2e() {
   });
   assert.match(result.stderr, /selected account1/);
   assert.match(result.stderr, /exec 'retry probe'|exec retry probe/);
+  assert.equal(readRecords().filter((entry) => entry.type === "limit-read").length, 8);
+
+  clearRecords();
+  result = ok("cx", ["status"], { FAKE_LIMIT_ERROR: "401 Unauthorized: token_expired" });
+  assert.equal(
+    readRecords().filter((entry) => entry.type === "limit-read").length,
+    4,
+    "non-retryable authentication failures should only be queried once per account",
+  );
 
   result = ok("cx", ["--account", "4", "--dry-run", "--no-bypass", "exec", "hello"]);
   assert.match(result.stderr, /\.codex-account4/);

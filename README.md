@@ -51,7 +51,9 @@ them as unsupported project-local settings.
 `cx quota` shows a weighted weekly total first, then one weekly bar and reset time for each account.
 It identifies the weekly quota by Codex's reported 10080-minute window instead of assuming `primary` or `secondary` means a fixed quota type.
 When Codex does not report a capacity for the weekly window, that account is counted as one equal-weight unit and the total label says so.
-Quota probes use a 30s timeout, 3 attempts, and a 1500ms retry delay by default; tune `CX_LIMIT_TIMEOUT_MS`, `CX_LIMIT_RETRIES`, and `CX_LIMIT_RETRY_DELAY_MS` if your network is unstable.
+Every ChatGPT-account quota probe reads the current server-side weekly limit; `cx` does not select accounts from a local quota cache.
+Probes use a 30s timeout, up to 3 attempts, and a 1500ms retry delay by default; expired local access tokens and other non-retryable authentication errors fail immediately instead of delaying startup with identical retries.
+Tune `CX_LIMIT_TIMEOUT_MS`, `CX_LIMIT_RETRIES`, and `CX_LIMIT_RETRY_DELAY_MS` if your network is unstable.
 
 During one auto-switched task, model/profile/reasoning defaults stay with the task.
 New Codex task runs leave `service_tier` unset so Codex can use the selected model's default without unsupported-tier warnings.

@@ -6,11 +6,14 @@ const os = require("os");
 const { spawnSync } = require("child_process");
 const path = require("path");
 const {
+  accountAccessTokenExpired,
   extractAccountEmail,
   isApiKeyAuth,
   isUsable,
   isUsageLimitLogLine,
   isResumeInvocation,
+  isRetryableRateLimitError,
+  jwtExpiryMs,
   limitExhaustedReason,
   logChunkHasUsageLimit,
   pinTaskDefaultsFromAccount,
@@ -21,6 +24,10 @@ const {
   formatProgressPercent,
   trustedProjectPathsFromCodexArgs,
 } = require("../bin/cx");
+
+function jwt(payload) {
+  return `${base64UrlJson({ alg: "none" })}.${base64UrlJson(payload)}.`;
+}
 
 function account(name, weekly, options = {}) {
   const weeklyBucket = { usedPercent: weekly, windowDurationMins: 10080 };
@@ -167,6 +174,21 @@ function tokenCountWithoutCredits() {
   assert.equal(extractAccountEmail({ tokens: { id_token: "not-a-token" } }), "");
   assert.equal(isApiKeyAuth({ auth_mode: "apikey", OPENAI_API_KEY: "sk-test" }), true);
   assert.equal(isApiKeyAuth({ auth_mode: "chatgpt" }), false);
+  assert.equal(jwtExpiryMs(jwt({ exp: 1_800_000_000 })), 1_800_000_000_000);
+  assert.equal(jwtExpiryMs("not-a-token"), null);
+  assert.equal(
+    accountAccessTokenExpired({ tokens: { access_token: jwt({ exp: 100 }) } }, 100_000),
+    true,
+  );
+  assert.equal(
+    accountAccessTokenExpired({ tokens: { access_token: jwt({ exp: 101 }) } }, 100_000),
+    false,
+  );
+  assert.equal(accountAccessTokenExpired({ tokens: { access_token: "opaque" } }, 100_000), false);
+  assert.equal(isRetryableRateLimitError(new Error("401 Unauthorized: token_expired")), false);
+  assert.equal(isRetryableRateLimitError(new Error("403 Forbidden")), false);
+  assert.equal(isRetryableRateLimitError(new Error("request timed out")), true);
+  assert.equal(isRetryableRateLimitError(new Error("503 Service Unavailable")), true);
 }
 
 {

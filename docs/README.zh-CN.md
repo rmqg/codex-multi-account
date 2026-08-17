@@ -367,7 +367,9 @@ CX_AUTO_MAX_SWITCHES=5
 CX_INTERACTIVE_AUTO_EXEC=1
 ```
 
-`CX_LIMIT_TIMEOUT_MS` 控制单次余额探测的超时时间，`CX_LIMIT_RETRIES` 控制每个账号最多尝试几次，`CX_LIMIT_RETRY_DELAY_MS` 控制失败后再试前等待多久。
+`CX_LIMIT_TIMEOUT_MS` 控制单次额度探测的超时时间，`CX_LIMIT_RETRIES` 控制每个账号最多尝试几次，`CX_LIMIT_RETRY_DELAY_MS` 控制失败后再试前等待多久。
+
+每个 ChatGPT 账号的探测都会在线读取服务端当前的周限额，`cx` 不会使用本地额度缓存选号。网络超时和临时服务错误仍会按配置重试；本地访问令牌已经过期，或服务端明确返回 401/403 等不可重试认证错误时，会立即停止该账号的重复探测，以免相同错误拖慢 `cx` 启动。
 
 ## 自动切号怎么继续任务
 
@@ -401,6 +403,14 @@ cx-setup --accounts 3 --migrate
 `missing ~/.codex-accountN/auth.json`
 
 对应账号还没登录：
+
+```sh
+CODEX_HOME="$HOME/.codex-accountN" codex login
+```
+
+`access token expired`
+
+该账号的登录令牌已经过期，重新登录后才能取得最新周限额：
 
 ```sh
 CODEX_HOME="$HOME/.codex-accountN" codex login
